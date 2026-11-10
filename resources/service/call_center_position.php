@@ -1,17 +1,20 @@
 <?php
+/*
+ * Call Center Position for FusionPBX
+ * Copyright (c) 2026 Norman King
+ * SPDX-License-Identifier: MIT
+ * See the LICENSE file for the full license text.
+ */
 
-require_once dirname(__DIR__, 4) . '/resources/require.php';
+//load fusionpbx, which also registers the class autoloader
+	require_once dirname(__DIR__, 4) . '/resources/require.php';
 
-try {
-	// Create the service
-	$service = call_center_position_service::create();
-
-	// Exit using the status run method returns
-	exit($service->run());
-} catch (Throwable $ex) {
-	// Show the details of the error
-	echo "Error occurred in " . $ex->getFile() . ' (' . $ex->getLine() . '):' . $ex->getMessage();
-
-	// Exit with error code
-	exit($ex->getCode());
-}
+//run the service until it is asked to stop, and exit with its status
+	try {
+		$service = call_center_position_service::create();
+		exit($service->run());
+	}
+	catch (Throwable $e) {
+		fwrite(STDERR, "call_center_position: " . $e->getMessage() . " in " . $e->getFile() . " on line " . $e->getLine() . "\n");
+		exit(1);
+	}

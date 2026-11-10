@@ -1,4 +1,4 @@
-# fusionpbx-app-call_center_position
+# Call Center Position for FusionPBX
 
 Tell callers waiting in a FusionPBX call center queue their position in line.
 
@@ -60,17 +60,39 @@ their timer and is not announced again straight away.
 
 ## Installing
 
+Requires FusionPBX 5.5 or later (it uses the `service` class and the `settings` object) and
+FreeSWITCH with mod_callcenter.
+
 ```sh
 cd /var/www/fusionpbx/app
-git clone <this repo> call_center_position
+git clone https://github.com/NS-Innovations/fusionpbx_call_center_position_announce.git call_center_position
+chown -R www-data:www-data call_center_position
 cd /var/www/fusionpbx/core/upgrade
 php upgrade.php
 php upgrade.php --group
 php upgrade.php --service update
 ```
 
-`--group` assigns the permission that shows the field. `--service update` installs, enables and
-starts `/etc/systemd/system/call_center_position.service`.
+**Clone into `call_center_position`, not the repository's own name.** FusionPBX finds the app, its
+class and its service by that directory name.
+
+- `upgrade.php` adds the default settings.
+- `--group` gives `admin` and `superadmin` the permission that shows the **Announce Position** field.
+  Note that it also resets every unprotected group's permissions to the defaults, as it always does.
+- `--service update` installs, enables and starts `/etc/systemd/system/call_center_position.service`.
+
+Check it is running with `systemctl status call_center_position`.
+
+On FreeBSD the app lives under `/usr/local/www/fusionpbx`; enable the rc.d script with
+`call_center_position_enable="YES"` in `/etc/rc.conf`.
+
+## Updating
+
+```sh
+cd /var/www/fusionpbx/app/call_center_position
+git pull
+systemctl restart call_center_position
+```
 
 ## Removing
 
@@ -97,3 +119,12 @@ to the Call Center app, so it stays.
   can be told a smaller number than the one they had, because someone with a higher score was put
   ahead of them.
 - **One switch.** The service talks to the switch configured for FusionPBX's event socket.
+
+---
+
+## License
+
+MIT, see [LICENSE](LICENSE). Copyright (c) 2026 Norman King.
+
+The app runs inside FusionPBX, which is licensed separately under the Mozilla Public License 1.1;
+this repository contains none of FusionPBX's own files.

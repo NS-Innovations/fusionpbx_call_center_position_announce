@@ -1,65 +1,32 @@
 #!/bin/sh
 #
+# Call Center Position for FusionPBX - rc.d script
+# Copyright (c) 2026 Norman King, MIT License
+#
 # PROVIDE: call_center_position
-# REQUIRE: DAEMON
+# REQUIRE: LOGIN postgresql freeswitch
 # KEYWORD: shutdown
 #
-# Add the following lines to /etc/rc.conf to enable call_center_position:
-# call_center_position_enable:           Set it to "YES" to enable call_center_position.
-#                          Default is "NO".
-#
+# Add to /etc/rc.conf to start at boot:
+#   call_center_position_enable="YES"
+# Optional:
+#   call_center_position_user="www"   the user the service runs as
 
 . /etc/rc.subr
-name="call_center_position"
 
-rcvar=${name}_enable
+name="call_center_position"
+rcvar="${name}_enable"
 load_rc_config $name
 
-# Set defaults
-: ${call_center_position_enable="NO"}
-: ${call_center_position_pidfile="/var/run/call_center_position.pid"}
+: ${call_center_position_enable:="NO"}
+: ${call_center_position_user:="www"}
 
-# Prepare the variables
-start_cmd=${name}_start
-stop_cmd=${name}_stop
-status_cmd=${name}_status
-pidfile=${call_center_position_pidfile}
-
-# Path to the PHP script
+pidfile="/var/run/${name}.pid"
+procname="/usr/local/bin/php"
 script="/usr/local/www/fusionpbx/app/call_center_position/resources/service/call_center_position.php"
 
-# Command to run the script
-command="/usr/local/bin/php"
-
-call_center_position_start() {
-    echo "Starting $name..."
-    if [ -f "$pidfile" ] && kill -0 "$(cat $pidfile)" 2>/dev/null; then
-        echo "$name is already running."
-    else
-        # Fully detach from parent shell to prevent 'service' from blocking
-        nohup $command $script </dev/null >/dev/null 2>&1 &
-        echo $! > "$pidfile"
-        echo "$name started."
-    fi
-}
-
-call_center_position_stop() {
-    echo "Stopping $name..."
-    if [ -f "$pidfile" ] && kill -0 "$(cat $pidfile)" 2>/dev/null; then
-        kill "$(cat $pidfile)"
-        rm -f "$pidfile"
-        echo "$name stopped."
-    else
-        echo "$name is not running."
-    fi
-}
-
-call_center_position_status() {
-    if [ -f "$pidfile" ] && kill -0 "$(cat $pidfile)" 2>/dev/null; then
-        echo "$name is running with PID $(cat $pidfile)."
-    else
-        echo "$name is not running."
-    fi
-}
+# daemon(8) keeps the service running and restarts it if it exits
+command="/usr/sbin/daemon"
+command_args="-f -r -P ${pidfile} -u ${call_center_position_user} ${procname} ${script}"
 
 run_rc_command "$1"

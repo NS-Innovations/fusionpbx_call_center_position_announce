@@ -6,8 +6,8 @@
 		$apps[$x]['category'] = "Switch";
 		$apps[$x]['subcategory'] = "";
 		$apps[$x]['version'] = "1.0";
-		$apps[$x]['license'] = "Mozilla Public License 1.1";
-		$apps[$x]['url'] = "http://www.fusionpbx.com";
+		$apps[$x]['license'] = "MIT";
+		$apps[$x]['url'] = "https://github.com/NS-Innovations/fusionpbx_call_center_position_announce";
 		$apps[$x]['description']['en-us'] = "Tell callers waiting in a call center queue their position in line.";
 		$apps[$x]['description']['en-gb'] = "Tell callers waiting in a call center queue their position in line.";
 
