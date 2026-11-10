@@ -1,0 +1,26 @@
+; Author: Mark J Crane <markjcrane@fusionpbx.com>
+; cp /var/www/fusionpbx/app/call_center_position/resources/service/debian/call_center_position.service /etc/systemd/system/call_center_position.service
+; systemctl daemon-reload
+; systemctl enable call_center_position
+; systemctl start call_center_position
+
+[Unit]
+Description=FusionPBX Call Center Position
+Wants=network-online.target
+Requires=network.target local-fs.target
+After=network.target network-online.target local-fs.target
+StartLimitIntervalSec=0
+
+[Service]
+WorkingDirectory=/var/www/fusionpbx
+ExecStart=/usr/bin/php /var/www/fusionpbx/app/call_center_position/resources/service/call_center_position.php
+RuntimeDirectory=fusionpbx
+RuntimeDirectoryMode=0755
+RuntimeDirectoryPreserve=yes
+User=www-data
+Group=www-data
+TimeoutSec=55s
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
