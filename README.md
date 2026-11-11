@@ -55,8 +55,10 @@ A small service, `call_center_position`, runs once a second:
    queue.
 
 A caller whose agent is ringing is not spoken over. A caller whose agent does not answer keeps
-their timer and is not announced again straight away. A caller who comes back to an abandoned place
-in the queue is first announced one interval after coming back.
+their timer: if they were due while the agent rang, they are told one interval later. A caller who
+comes back to an abandoned place in the queue is first announced one interval after coming back.
+After the service starts, or a queue is turned on, callers already waiting are first announced one
+interval later, not all at once.
 
 ---
 
@@ -94,8 +96,11 @@ On FreeBSD the app lives under `/usr/local/www/fusionpbx`; enable the rc.d scrip
 ```sh
 cd /var/www/fusionpbx/app/call_center_position
 git pull
+php /var/www/fusionpbx/core/upgrade/upgrade.php --service update
 systemctl restart call_center_position
 ```
+
+`--service update` copies the systemd unit again, so a change to it reaches the installed copy.
 
 ## Removing
 

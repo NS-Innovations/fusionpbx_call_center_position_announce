@@ -95,6 +95,13 @@ class call_center_position_service extends service {
 	private $next_announcement = [];
 
 	/**
+	 * whether a failed read of the queues was already logged, so it is logged once until a read works
+	 *
+	 * @var bool
+	 */
+	private $warned_select = false;
+
+	/**
 	 * the sound settings already warned about, so a bad value is logged once and not every pass
 	 *
 	 * @var array
@@ -162,12 +169,14 @@ class call_center_position_service extends service {
 		}
 
 		//the global setting turns the service off or on
-		$settings = new settings(['database' => $this->database, 'category' => 'call_center_position']);
+		//without caching, a change made on the settings page is seen by this process within the refresh
+		$settings = new settings(['database' => $this->database, 'category' => 'call_center_position', 'allow_caching' => false]);
 		$this->enabled = $settings->get('call_center_position', 'enabled', true);
 		if (!$this->enabled) {
 			$this->queues = [];
 			$this->next_announcement = [];
 			$this->queues_loaded = time();
+			$this->close_switch_connection();
 			return;
 		}
 
@@ -175,14 +184,19 @@ class call_center_position_service extends service {
 		$sql = "select q.queue_extension, q.domain_uuid, d.domain_name ";
 		$sql .= "from v_call_center_queues as q ";
 		$sql .= "inner join v_domains as d on d.domain_uuid = q.domain_uuid ";
-		$sql .= "where cast(q.queue_announce_position as text) = 'true' ";
+		$sql .= "where q.queue_announce_position = 'true' ";
 		$sql .= "and d.domain_enabled = true ";
 		$rows = $this->database->select($sql, null, 'all');
 		unset($sql);
 		if ($rows === false) {
 			//keep the queues read before and try again on the next pass
+			if (!$this->warned_select) {
+				$this->warned_select = true;
+				$this->warning("the call center queues could not be read, trying again every second");
+			}
 			return;
 		}
+		$this->warned_select = false;
 
 		//build the queue list using the settings of each domain
 		$queues = [];
@@ -192,7 +206,7 @@ class call_center_position_service extends service {
 				//get the settings of the domain once, only the category of this app
 				$domain_uuid = $row['domain_uuid'];
 				if (!isset($domain_settings[$domain_uuid])) {
-					$domain_settings[$domain_uuid] = new settings(['database' => $this->database, 'domain_uuid' => $domain_uuid, 'category' => 'call_center_position']);
+					$domain_settings[$domain_uuid] = new settings(['database' => $this->database, 'domain_uuid' => $domain_uuid, 'category' => 'call_center_position', 'allow_caching' => false]);
 				}
 				$settings = $domain_settings[$domain_uuid];
 
@@ -205,6 +219,9 @@ class call_center_position_service extends service {
 				//mod_callcenter names the queue extension@domain_name
 				$queue_name = $row['queue_extension'].'@'.$row['domain_name'];
 				$queues[$queue_name]['interval'] = $interval;
+				//when the service began announcing in this queue, so callers who waited before a restart or
+				//before the queue was turned on are first told one interval later, not all at once
+				$queues[$queue_name]['since'] = $this->queues[$queue_name]['since'] ?? time();
 				$queues[$queue_name]['sound_before'] = $this->sound($settings->get('call_center_position', 'sound_before', self::default_sound_before), self::default_sound_before);
 				$queues[$queue_name]['sound_after'] = $this->sound($settings->get('call_center_position', 'sound_after', self::default_sound_after), self::default_sound_after);
 			}
@@ -240,6 +257,18 @@ class call_center_position_service extends service {
 	}
 
 	/**
+	 * Closes the connection to the switch while there is nothing to announce.
+	 *
+	 * @return void
+	 */
+	private function close_switch_connection(): void {
+		if ($this->esl !== null) {
+			$this->esl->close();
+			$this->esl = null;
+		}
+	}
+
+	/**
 	 * Sends the position to every waiting caller whose announcement is due.
 	 *
 	 * @return void
@@ -248,6 +277,7 @@ class call_center_position_service extends service {
 		//nothing to do without a queue
 		if (empty($this->queues)) {
 			$this->next_announcement = [];
+			$this->close_switch_connection();
 			return;
 		}
 
@@ -270,8 +300,11 @@ class call_center_position_service extends service {
 		//group the members by queue, only the queues that announce the position
 		$members = [];
 		foreach ($result['response'] as $member) {
+			if (!is_array($member)) {
+				continue;
+			}
 			$queue_name = $member['queue'] ?? '';
-			if (is_array($member) && isset($this->queues[$queue_name])) {
+			if (isset($this->queues[$queue_name])) {
 				$members[$queue_name][] = $member;
 			}
 		}
@@ -312,11 +345,19 @@ class call_center_position_service extends service {
 					if ($joined <= 0) {
 						$joined = $now;
 					}
-					$this->next_announcement[$session_uuid] = $joined + $queue['interval'];
+					$this->next_announcement[$session_uuid] = max($joined, $queue['since']) + $queue['interval'];
 				}
 
-				//only speak to a caller who is waiting and is due
-				if ($state != 'Waiting' || $now < $this->next_announcement[$session_uuid]) {
+				//a caller due while an agent is ringing is told one interval later, not as soon as the agent misses
+				if ($state != 'Waiting') {
+					if ($now >= $this->next_announcement[$session_uuid]) {
+						$this->next_announcement[$session_uuid] = $now + $queue['interval'];
+					}
+					continue;
+				}
+
+				//only speak to a caller who is due
+				if ($now < $this->next_announcement[$session_uuid]) {
 					continue;
 				}
 				$this->next_announcement[$session_uuid] = $now + $queue['interval'];

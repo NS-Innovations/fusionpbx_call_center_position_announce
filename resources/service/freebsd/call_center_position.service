@@ -28,9 +28,9 @@ pidfile="/var/run/${name}.pid"
 php="/usr/local/bin/php"
 script="/usr/local/www/fusionpbx/app/call_center_position/resources/service/call_center_position.php"
 
-# daemon(8) keeps the service running and restarts it 5 seconds after it exits
+# daemon(8) keeps the service running, restarts it 5 seconds after it exits, and sends its output to syslog
 command="/usr/sbin/daemon"
-command_args="-f -R 5 -P ${pidfile} -u ${call_center_position_runas} ${php} ${script}"
+command_args="-S -T ${name} -R 5 -P ${pidfile} -u ${call_center_position_runas} ${php} ${script}"
 
 # the service keeps its own pid file in /var/run/fusionpbx, which is cleared at boot
 start_precmd="${name}_prestart"
