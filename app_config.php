@@ -1,4 +1,10 @@
 <?php
+/*
+ * Call Center Position for FusionPBX
+ * Copyright (c) 2026 Norman King
+ * SPDX-License-Identifier: MIT
+ * See the LICENSE file for the full license text.
+ */
 
 	//application details
 		$apps[$x]['name'] = "Call Center Position";
@@ -44,7 +50,7 @@
 		$apps[$x]['default_settings'][$y]['default_setting_name'] = "text";
 		$apps[$x]['default_settings'][$y]['default_setting_value'] = "ivr/ivr-you_are_number.wav";
 		$apps[$x]['default_settings'][$y]['default_setting_enabled'] = "true";
-		$apps[$x]['default_settings'][$y]['default_setting_description'] = "Sound played before the position number. A relative path uses the language and voice of the queue.";
+		$apps[$x]['default_settings'][$y]['default_setting_description'] = "Sound played before the position number, or none to leave it out. A relative path uses the language and voice of the queue.";
 		$y++;
 		$apps[$x]['default_settings'][$y]['default_setting_uuid'] = "c172ad38-a648-4d93-895d-6a613548b769";
 		$apps[$x]['default_settings'][$y]['default_setting_category'] = "call_center_position";
@@ -52,7 +58,7 @@
 		$apps[$x]['default_settings'][$y]['default_setting_name'] = "text";
 		$apps[$x]['default_settings'][$y]['default_setting_value'] = "ivr/ivr-in_line.wav";
 		$apps[$x]['default_settings'][$y]['default_setting_enabled'] = "true";
-		$apps[$x]['default_settings'][$y]['default_setting_description'] = "Sound played after the position number. A relative path uses the language and voice of the queue.";
+		$apps[$x]['default_settings'][$y]['default_setting_description'] = "Sound played after the position number, or none to leave it out. A relative path uses the language and voice of the queue.";
 		$y++;
 
 ?>

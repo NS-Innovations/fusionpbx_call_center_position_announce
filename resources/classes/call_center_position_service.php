@@ -9,60 +9,97 @@
 /**
  * Tells callers waiting in a call center queue their position in line.
  *
- * Once a second the service asks mod_callcenter for the members of every queue that has Announce
- * Position set to true. The members come back in the order mod_callcenter serves them, so the
- * position of a caller is one more than the number of callers ahead of them that are still waiting
- * or being offered to an agent. A caller who is waiting is sent the announcement with uuid_broadcast
- * every interval seconds, which plays it over the music on hold and lets the music carry on after.
+ * Once a second the service asks mod_callcenter for the members of every queue. They come back in the
+ * order mod_callcenter serves them, so the position of a caller in a queue that has Announce Position
+ * set to true is one more than the number of callers ahead of them that are still waiting or being
+ * offered to an agent. A caller who is waiting is sent the announcement with uuid_broadcast every
+ * interval seconds, which plays it over the music on hold and lets the music carry on after.
  */
 class call_center_position_service extends service {
 
 	/**
-	 * the sounds used when a setting is empty or not valid
+	 * the name of the app
+	 *
+	 * @var string
+	 */
+	const app_name = 'call_center_position';
+
+	/**
+	 * the uuid of the app
+	 *
+	 * @var string
+	 */
+	const app_uuid = '550af405-5c0a-45b5-ad65-262d642260b0';
+
+	/**
+	 * the sound played before the number when the setting is not valid
+	 *
+	 * @var string
 	 */
 	const default_sound_before = 'ivr/ivr-you_are_number.wav';
+
+	/**
+	 * the sound played after the number when the setting is not valid
+	 *
+	 * @var string
+	 */
 	const default_sound_after = 'ivr/ivr-in_line.wav';
 
 	/**
 	 * seconds between reads of the queues and their settings from the database
+	 *
+	 * @var int
 	 */
 	const queue_refresh = 15;
 
 	/**
 	 * database object
+	 *
 	 * @var database
 	 */
 	private $database;
 
 	/**
-	 * settings object
-	 * @var settings
+	 * the connection to the switch, made again after it drops
+	 *
+	 * @var event_socket|null
 	 */
-	private $settings;
+	private $esl = null;
 
 	/**
-	 * whether the service does any work
+	 * whether the service does any work, read with the queues so a change is picked up without a restart
+	 *
 	 * @var bool
 	 */
-	private $enabled;
+	private $enabled = true;
 
 	/**
 	 * the queues that announce the position, keyed by the mod_callcenter queue name
+	 *
 	 * @var array
 	 */
 	private $queues = [];
 
 	/**
 	 * when the queues were last read from the database
+	 *
 	 * @var int
 	 */
 	private $queues_loaded = 0;
 
 	/**
 	 * when each caller in a queue is next told their position, keyed by the session uuid
+	 *
 	 * @var array
 	 */
 	private $next_announcement = [];
+
+	/**
+	 * the sound settings already warned about, so a bad value is logged once and not every pass
+	 *
+	 * @var array
+	 */
+	private $warned_sounds = [];
 
 	/**
 	 * Reloads settings from the config file and the database.
@@ -73,16 +110,10 @@ class call_center_position_service extends service {
 		//re-read the config file to get any possible changes
 		parent::$config->read();
 
-		//connect to the database
-		$this->database = new database(['config' => parent::$config]);
+		//use the connection fusionpbx opened
+		$this->database = database::new(['config' => parent::$config]);
 
-		//get the settings using the global defaults
-		$this->settings = new settings(['database' => $this->database]);
-
-		//get the service settings
-		$this->enabled = $this->settings->get('call_center_position', 'enabled', true);
-
-		//read the queues again on the next pass
+		//read the queues and the settings again on the next pass
 		$this->queues_loaded = 0;
 	}
 
@@ -99,18 +130,13 @@ class call_center_position_service extends service {
 		//service work is handled here
 		while ($this->running) {
 
-			//make sure the database connection is available
-			while (!$this->database->is_connected()) {
-				$this->database->connect();
-				$this->settings = new settings(['database' => $this->database]);
-				sleep(1);
+			//read the queues and the settings, which also turns the service off or on
+			if (time() - $this->queues_loaded >= self::queue_refresh) {
+				$this->load_queues();
 			}
 
 			//the service can be turned off without stopping it
 			if ($this->enabled) {
-				if (time() - $this->queues_loaded >= self::queue_refresh) {
-					$this->load_queues();
-				}
 				$this->announce_positions();
 			}
 
@@ -121,11 +147,30 @@ class call_center_position_service extends service {
 	}
 
 	/**
-	 * Reads the queues that announce the position, with the settings of their domain.
+	 * Reads whether the service is enabled and the queues that announce the position, with the settings
+	 * of their domain. When the database can not be read the queues read before are kept.
 	 *
 	 * @return void
 	 */
 	private function load_queues(): void {
+		//try again in a second when the database is not there
+		if (!$this->database->is_connected()) {
+			$this->database->connect();
+			if (!$this->database->is_connected()) {
+				return;
+			}
+		}
+
+		//the global setting turns the service off or on
+		$settings = new settings(['database' => $this->database, 'category' => 'call_center_position']);
+		$this->enabled = $settings->get('call_center_position', 'enabled', true);
+		if (!$this->enabled) {
+			$this->queues = [];
+			$this->next_announcement = [];
+			$this->queues_loaded = time();
+			return;
+		}
+
 		//get the queues with announce position turned on
 		$sql = "select q.queue_extension, q.domain_uuid, d.domain_name ";
 		$sql .= "from v_call_center_queues as q ";
@@ -134,16 +179,20 @@ class call_center_position_service extends service {
 		$sql .= "and d.domain_enabled = true ";
 		$rows = $this->database->select($sql, null, 'all');
 		unset($sql);
+		if ($rows === false) {
+			//keep the queues read before and try again on the next pass
+			return;
+		}
 
 		//build the queue list using the settings of each domain
 		$queues = [];
 		$domain_settings = [];
 		if (is_array($rows) && @sizeof($rows) != 0) {
 			foreach ($rows as $row) {
-				//get the settings of the domain once
+				//get the settings of the domain once, only the category of this app
 				$domain_uuid = $row['domain_uuid'];
 				if (!isset($domain_settings[$domain_uuid])) {
-					$domain_settings[$domain_uuid] = new settings(['database' => $this->database, 'domain_uuid' => $domain_uuid]);
+					$domain_settings[$domain_uuid] = new settings(['database' => $this->database, 'domain_uuid' => $domain_uuid, 'category' => 'call_center_position']);
 				}
 				$settings = $domain_settings[$domain_uuid];
 
@@ -168,6 +217,29 @@ class call_center_position_service extends service {
 	}
 
 	/**
+	 * Returns the connection to the switch, opening a new one when there is none or it dropped. A new
+	 * connection starts with an empty buffer, so a reply cut off when the switch went away is not read
+	 * as the start of the next one.
+	 *
+	 * @return event_socket|null
+	 */
+	private function switch_connection() {
+		if ($this->esl !== null && $this->esl->is_connected()) {
+			return $this->esl;
+		}
+		if ($this->esl !== null) {
+			$this->esl->close();
+			$this->esl = null;
+		}
+		$esl = new event_socket;
+		if (!$esl->connect() || !$esl->is_connected()) {
+			return null;
+		}
+		$this->esl = $esl;
+		return $this->esl;
+	}
+
+	/**
 	 * Sends the position to every waiting caller whose announcement is due.
 	 *
 	 * @return void
@@ -180,25 +252,46 @@ class call_center_position_service extends service {
 		}
 
 		//connect to the switch, which reconnects after the switch restarts
-		$esl = event_socket::create();
-		if (!$esl->connected()) {
+		$esl = $this->switch_connection();
+		if ($esl === null) {
 			return;
+		}
+
+		//get the members of every queue in one request, in the order mod_callcenter serves them; json keeps
+		//a | in a caller id name from breaking the columns
+		$command = json_encode(['command' => 'callcenter_config', 'data' => ['arguments' => 'member list']]);
+		$response = $esl->request('api json '.$command);
+		$result = is_string($response) ? json_decode($response, true) : null;
+		if (!is_array($result) || !is_array($result['response'] ?? null)) {
+			//keep every timer as it is and try again on the next pass
+			return;
+		}
+
+		//group the members by queue, only the queues that announce the position
+		$members = [];
+		foreach ($result['response'] as $member) {
+			$queue_name = $member['queue'] ?? '';
+			if (is_array($member) && isset($this->queues[$queue_name])) {
+				$members[$queue_name][] = $member;
+			}
 		}
 
 		$now = time();
 		$in_queue = [];
-		foreach ($this->queues as $queue_name => $queue) {
-			//get the members in the order mod_callcenter serves them, json keeps a | in a caller id name from breaking the columns
-			$command = json_encode(['command' => 'callcenter_config', 'data' => ['arguments' => 'queue list members', 'queue_name' => $queue_name]]);
-			$response = $esl->request('api json '.$command);
-			$result = is_string($response) ? json_decode($response, true) : null;
-			if (!is_array($result) || !is_array($result['response'] ?? null)) {
-				continue;
-			}
+		foreach ($members as $queue_name => $list) {
+			$queue = $this->queues[$queue_name];
+
+			//callers with the same score are put in the order they joined, so two callers who joined in
+			//the same second do not swap places between announcements
+			usort($list, function ($a, $b) {
+				return ((int) ($b['score'] ?? 0) <=> (int) ($a['score'] ?? 0))
+					?: ((int) ($a['joined_epoch'] ?? 0) <=> (int) ($b['joined_epoch'] ?? 0))
+					?: strcmp((string) ($a['session_uuid'] ?? ''), (string) ($b['session_uuid'] ?? ''));
+			});
 
 			//count the callers still ahead, waiting or being offered to an agent
 			$position = 0;
-			foreach ($result['response'] as $member) {
+			foreach ($list as $member) {
 				$state = $member['state'] ?? '';
 				if ($state != 'Waiting' && $state != 'Trying') {
 					continue;
@@ -212,9 +305,14 @@ class call_center_position_service extends service {
 				}
 				$in_queue[$session_uuid] = true;
 
-				//the first announcement comes one interval after joining the queue
+				//the first announcement comes one interval after joining the queue, or after coming back to
+				//it, since a caller who resumes an abandoned place keeps the time they first joined
 				if (!isset($this->next_announcement[$session_uuid])) {
-					$this->next_announcement[$session_uuid] = (int) ($member['joined_epoch'] ?? $now) + $queue['interval'];
+					$joined = max((int) ($member['joined_epoch'] ?? 0), (int) ($member['rejoined_epoch'] ?? 0));
+					if ($joined <= 0) {
+						$joined = $now;
+					}
+					$this->next_announcement[$session_uuid] = $joined + $queue['interval'];
 				}
 
 				//only speak to a caller who is waiting and is due
@@ -273,16 +371,20 @@ class call_center_position_service extends service {
 	 * @param mixed  $value   The value of the setting.
 	 * @param string $default The sound to use when the value is not valid.
 	 *
-	 * @return string The sound, or an empty string when the setting is empty to leave the part out.
+	 * @return string The sound, or an empty string when the setting is none to leave the part out.
 	 */
 	private function sound($value, string $default): string {
 		$value = trim((string) $value);
-		if ($value === '') {
+		//fusionpbx drops a setting with an empty value, so none is the way to leave the part out
+		if ($value === '' || strtolower($value) === 'none') {
 			return '';
 		}
 		//a space would split the command and a ! would split the file string
 		if (!preg_match('/^[A-Za-z0-9_\.\/\-]+$/', $value)) {
-			$this->warning("ignoring the sound '".$value."', using ".$default);
+			if (!isset($this->warned_sounds[$value])) {
+				$this->warned_sounds[$value] = true;
+				$this->warning("ignoring the sound '".$value."', using ".$default);
+			}
 			return $default;
 		}
 		return $value;

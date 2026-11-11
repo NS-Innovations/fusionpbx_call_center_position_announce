@@ -1,7 +1,7 @@
 #!/bin/sh
 #
 # Call Center Position for FusionPBX - rc.d script
-# Copyright (c) 2026 Norman King, MIT License
+# Copyright 2026 Norman King, MIT License
 #
 # PROVIDE: call_center_position
 # REQUIRE: LOGIN postgresql freeswitch
@@ -10,7 +10,7 @@
 # Add to /etc/rc.conf to start at boot:
 #   call_center_position_enable="YES"
 # Optional:
-#   call_center_position_user="www"   the user the service runs as
+#   call_center_position_runas="www"   the user the service runs as
 
 . /etc/rc.subr
 
@@ -19,14 +19,24 @@ rcvar="${name}_enable"
 load_rc_config $name
 
 : ${call_center_position_enable:="NO"}
-: ${call_center_position_user:="www"}
+: ${call_center_position_runas:="www"}
 
+# daemon(8) runs as root so it can write its pid file and switch to the user itself; the user is not
+# given as ${name}_user, which would make rc.subr start daemon as that user. The pid file is the one of
+# daemon, whose title is "daemon: ...", which rc.subr matches against procname /usr/sbin/daemon.
 pidfile="/var/run/${name}.pid"
-procname="/usr/local/bin/php"
+php="/usr/local/bin/php"
 script="/usr/local/www/fusionpbx/app/call_center_position/resources/service/call_center_position.php"
 
-# daemon(8) keeps the service running and restarts it if it exits
+# daemon(8) keeps the service running and restarts it 5 seconds after it exits
 command="/usr/sbin/daemon"
-command_args="-f -r -P ${pidfile} -u ${call_center_position_user} ${procname} ${script}"
+command_args="-f -R 5 -P ${pidfile} -u ${call_center_position_runas} ${php} ${script}"
+
+# the service keeps its own pid file in /var/run/fusionpbx, which is cleared at boot
+start_precmd="${name}_prestart"
+call_center_position_prestart()
+{
+	install -d -o ${call_center_position_runas} -m 0755 /var/run/fusionpbx
+}
 
 run_rc_command "$1"

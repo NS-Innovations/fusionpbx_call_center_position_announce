@@ -25,14 +25,15 @@ Under **Advanced -> Default Settings**, category `call_center_position`. Every s
 
 | Subcategory | Default | Meaning |
 |---|---|---|
-| `enabled` | `true` | Turns the service off without stopping it. |
+| `enabled` | `true` | Turns the service off without stopping it. Picked up within 15 seconds. |
 | `interval` | `30` | Seconds between announcements to a caller. The first one comes one interval after the caller joins the queue. Minimum `10`. |
-| `sound_before` | `ivr/ivr-you_are_number.wav` | Played before the number. Empty leaves it out. |
-| `sound_after` | `ivr/ivr-in_line.wav` | Played after the number. Empty leaves it out. |
+| `sound_before` | `ivr/ivr-you_are_number.wav` | Played before the number. `none` leaves it out. |
+| `sound_after` | `ivr/ivr-in_line.wav` | Played after the number. `none` leaves it out. |
 
 A relative sound path resolves against the language and voice of the queue, the same way the rest
 of the queue's prompts do. An absolute path, for example a recording, works too, but it cannot
-contain spaces or `!`.
+contain spaces or `!`. An empty value does not leave a sound out, because FusionPBX skips a setting
+with an empty value and the default is used instead; use `none`.
 
 ---
 
@@ -42,10 +43,10 @@ A small service, `call_center_position`, runs once a second:
 
 1. Every 15 seconds it reads the queues with **Announce Position** set to `true` from the database,
    with the settings of their domain.
-2. For each of those queues it asks mod_callcenter for the members with
-   `json {"command":"callcenter_config","data":{"arguments":"queue list members",...}}`. They come
-   back in the order mod_callcenter serves them, highest score first, where the score is the time
-   waited plus the base and skill scores.
+2. It asks mod_callcenter for the members of every queue in one request,
+   `json {"command":"callcenter_config","data":{"arguments":"member list"}}`. They come back in the
+   order mod_callcenter serves them, highest score first, where the score is the time waited plus the
+   base and skill scores. Callers with the same score are put in the order they joined.
 3. A caller's position is one more than the number of callers ahead of them who are `Waiting` or
    being offered to an agent (`Trying`).
 4. When a `Waiting` caller is due, it sends
@@ -54,7 +55,8 @@ A small service, `call_center_position`, runs once a second:
    queue.
 
 A caller whose agent is ringing is not spoken over. A caller whose agent does not answer keeps
-their timer and is not announced again straight away.
+their timer and is not announced again straight away. A caller who comes back to an abandoned place
+in the queue is first announced one interval after coming back.
 
 ---
 
@@ -84,7 +86,8 @@ class and its service by that directory name.
 Check it is running with `systemctl status call_center_position`.
 
 On FreeBSD the app lives under `/usr/local/www/fusionpbx`; enable the rc.d script with
-`call_center_position_enable="YES"` in `/etc/rc.conf`.
+`call_center_position_enable="YES"` in `/etc/rc.conf`. It runs as `www`, which
+`call_center_position_runas` changes.
 
 ## Updating
 
@@ -119,6 +122,17 @@ to the Call Center app, so it stays.
   can be told a smaller number than the one they had, because someone with a higher score was put
   ahead of them.
 - **One switch.** The service talks to the switch configured for FusionPBX's event socket.
+- **The queue's own announcement is not coordinated.** A queue with an announce sound and frequency
+  of its own can play it at the same moment as the position, and the caller hears both at once.
+  Pick intervals that do not line up, or use one or the other.
+- **A caller leaving at the moment they are due** can hear the position at the start of whatever the
+  queue does next, such as its timeout action. mod_callcenter stops broadcasts when the caller leaves
+  the queue, but there is a short gap before the member list shows it.
+- **A group without `call_center_announce_position` turns it off.** The queue edit page saves the
+  Announce Position field even when the user can not see it, so a group that may edit queues but
+  lacks this permission sets it back to empty on every save. Give that group the permission too.
+- **A switch that stops answering** without closing the connection holds the service until it is
+  restarted. A switch that restarts is reconnected to by itself.
 
 ---
 
